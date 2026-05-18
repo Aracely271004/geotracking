@@ -136,23 +136,29 @@ Accede desde cualquier navegador:http://TU_IP:3000/panel### Funcionalidades
 - Comunicación HTTP (se recomienda HTTPS en producción)
 - Variables sensibles en `.env` (no incluido en el repositorio)
 
-## 📂 Estructura del Proyectogeotracking/
+## 📂 Estructura del Proyecto
+
+```
+geotracking/
 ├── src/
-│   ├── app.js                    # Servidor principal
+│   ├── app.js                     # Servidor principal
 │   ├── config/
-│   │   └── database.js           # Configuración PostgreSQL
+│   │   └── database.js            # Configuración PostgreSQL
 │   ├── controllers/
-│   │   └── locationController.js # Lógica de ubicaciones
+│   │   └── locationController.js  # Lógica de ubicaciones
 │   ├── middleware/
-│   │   └── auth.js               # Autenticación JWT
+│   │   └── auth.js                # Autenticación JWT
 │   └── routes/
-│       ├── location.js           # Rutas GPS
-│       ├── panel.js              # Ruta panel web
-│       └── history.js            # Ruta historial
+│       ├── location.js            # Rutas GPS
+│       ├── panel.js               # Ruta panel web
+│       └── history.js             # Ruta historial
 ├── public/
-│   └── index.html                # Panel web
+│   └── index.html                 # Panel web
 ├── package.json
-└── .env.example## 👩‍💻 Autora
+└── .env.example
+```
+
+## 👩‍💻 Autora
 
 **Aracely Fiorela Corampa Palacios**
 - GitHub: [@Aracely271004](https://github.com/Aracely271004)
