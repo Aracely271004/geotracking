@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoTracking Panel</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#1a1a2e;color:#fff}
+header{background:#16213e;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0f3460}
+header h1{font-size:20px;color:#4CAF50}
+#status{font-size:13px;color:#aaa}
+#container{display:flex;height:calc(100vh - 60px)}
+#sidebar{width:300px;background:#16213e;overflow-y:auto;border-right:1px solid #0f3460;flex-shrink:0}
+#sidebar h2{padding:15px;font-size:14px;color:#4CAF50;border-bottom:1px solid #0f3460}
+.device-card{padding:12px 15px;border-bottom:1px solid #0f3460}
+.device-card.active{background:#0f3460;border-left:3px solid #4CAF50}
+.device-id{font-size:12px;color:#4CAF50;font-weight:bold;margin-bottom:5px;cursor:pointer}
+.device-info{font-size:11px;color:#aaa;line-height:1.8}
+#map{flex:1}
+#refresh-badge{background:#4CAF50;color:#fff;padding:3px 8px;border-radius:10px;font-size:11px}
+.no-devices{padding:20px;color:#aaa;font-size:13px;text-align:center}
+.btn{width:100%;padding:7px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:6px;border:1px solid #4CAF50}
+.btn-primary{background:#4CAF50;color:#fff}
+.btn-outline{background:#0f3460;color:#4CAF50}
+.btn-outline:hover{background:#4CAF50;color:#fff}
+.btn-danger{background:#c0392b;color:#fff;border-color:#c0392b}
+.filter-box{padding:12px 15px;border-bottom:1px solid #0f3460;display:none;background:#0d1b2e}
+.filter-box label{font-size:11px;color:#aaa;display:block;margin-bottom:3px;margin-top:8px}
+.filter-box input{width:100%;padding:5px;background:#16213e;color:#fff;border:1px solid #0f3460;border-radius:4px;font-size:11px}
+.filter-box input:focus{outline:none;border-color:#4CAF50}
+#history-info{padding:10px 15px;font-size:11px;color:#aaa;border-bottom:1px solid #0f3460;display:none;background:#0d1b2e}
+</style>
+</head>
+<body>
+<header>
+<h1>🛰️ GeoTracking Panel</h1>
+<div><span id="status">Cargando...</span> &nbsp; <span id="refresh-badge">⟳ Auto-actualiza cada 5s</span></div>
+</header>
+<div id="container">
+<div id="sidebar">
+  <h2>📱 Dispositivos activos</h2>
+  <div class="filter-box" id="filter-box">
+    <label>📅 Fecha y hora inicio:</label>
+    <input type="datetime-local" id="from-date"/>
+    <label>📅 Fecha y hora fin:</label>
+    <input type="datetime-local" id="to-date"/>
+    <button class="btn btn-primary" onclick="applyFilter()">🔍 Ver ruta en rango</button>
+    <button class="btn btn-outline" onclick="loadHistory()">📍 Ver últimos 500 puntos</button>
+    <button class="btn btn-danger" onclick="clearFilter()">✖ Cerrar ruta</button>
+  </div>
+  <div id="history-info"></div>
+  <div id="device-list"><div class="no-devices">Buscando dispositivos...</div></div>
+</div>
+<div id="map"></div>
+</div>
+<script>
+const API_URL='/api/panel';
+const HISTORY_URL='/api/history';
+const markers={};
+let selectedDevice=null;
+let routeLine=null;
+let historyMarkers=[];
+
+const map=L.map('map').setView([-13.5294,-71.9567],14);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap © CARTO'}).addTo(map);
+const deviceIcon=L.divIcon({html:'📍',iconSize:[30,30],className:''});
+const startIcon=L.divIcon({html:'🟢',iconSize:[20,20],className:''});
+const endIcon=L.divIcon({html:'🔴',iconSize:[20,20],className:''});
+
+function timeSince(ts){
+  const s=Math.floor((new Date()-new Date(ts))/1000);
+  if(s<60)return 'hace '+s+'s';
+  if(s<3600)return 'hace '+Math.floor(s/60)+'min';
+  if(s<86400)return 'hace '+Math.floor(s/3600)+'h';
+  return 'hace '+Math.floor(s/86400)+'d';
+}
+
+function clearRoute(){
+  if(routeLine){map.removeLayer(routeLine);routeLine=null;}
+  historyMarkers.forEach(function(m){map.removeLayer(m)});
+  historyMarkers=[];
+  document.getElementById('history-info').style.display='none';
+}
+
+function clearFilter(){
+  clearRoute();
+  document.getElementById('filter-box').style.display='none';
+  document.getElementById('from-date').value='';
+  document.getElementById('to-date').value='';
+  selectedDevice=null;
+  document.querySelectorAll('.device-card').forEach(function(c){c.classList.remove('active')});
+}
+
+async function drawRoute(url){
+  try{
+    const res=await fetch(url);
+    const data=await res.json();
+    if(!data.success||data.data.length===0){
+      document.getElementById('history-info').style.display='block';
+      document.getElementById('history-info').innerHTML='⚠️ No hay puntos en ese rango de fechas';
+      return;
+    }
+    clearRoute();
+    const points=data.data.map(function(p){return[parseFloat(p.latitude),parseFloat(p.longitude)]});
+    routeLine=L.polyline(points,{color:'#4CAF50',weight:4,opacity:0.9}).addTo(map);
+    const sm=L.marker(points[0],{icon:startIcon}).addTo(map);
+    sm.bindPopup('<b>🟢 Inicio</b><br>'+new Date(data.data[0].timestamp).toLocaleString());
+    historyMarkers.push(sm);
+    const em=L.marker(points[points.length-1],{icon:endIcon}).addTo(map);
+    em.bindPopup('<b>🔴 Fin</b><br>'+new Date(data.data[data.data.length-1].timestamp).toLocaleString());
+    historyMarkers.push(em);
+    map.fitBounds(routeLine.getBounds(),{padding:[40,40]});
+    const info=document.getElementById('history-info');
+    info.style.display='block';
+    info.innerHTML='📍 <b>'+data.data.length+' puntos</b><br>🕐 Desde: '+new Date(data.data[0].timestamp).toLocaleString()+'<br>🕐 Hasta: '+new Date(data.data[data.data.length-1].timestamp).toLocaleString();
+  }catch(err){console.error(err);}
+}
+
+function loadHistory(){
+  if(!selectedDevice)return;
+  drawRoute(HISTORY_URL+'/'+selectedDevice+'?limit=500');
+}
+
+function applyFilter(){
+  if(!selectedDevice)return;
+  const from=document.getElementById('from-date').value;
+  const to=document.getElementById('to-date').value;
+  if(!from||!to){alert('Por favor ingresa fecha de inicio y fin');return;}
+  const fromISO=new Date(from).toISOString();
+  const toISO=new Date(to).toISOString();
+  drawRoute(HISTORY_URL+'/'+selectedDevice+'?from='+encodeURIComponent(fromISO)+'&to='+encodeURIComponent(toISO));
+}
+
+function selectDevice(deviceId, lat, lng){
+  selectedDevice=deviceId;
+  map.setView([lat,lng],16);
+  if(markers[deviceId])markers[deviceId].openPopup();
+  document.querySelectorAll('.device-card').forEach(function(c){c.classList.remove('active')});
+  const card=document.getElementById('card-'+deviceId);
+  if(card)card.classList.add('active');
+  document.getElementById('filter-box').style.display='block';
+}
+
+function updateDeviceList(devices){
+  const list=document.getElementById('device-list');
+  const status=document.getElementById('status');
+  if(devices.length===0){list.innerHTML='<div class="no-devices">Sin dispositivos</div>';return;}
+  status.textContent=devices.length+' dispositivo(s) — '+new Date().toLocaleTimeString();
+  list.innerHTML='';
+  devices.forEach(function(device){
+    const shortId=device.device_id.substring(0,12)+'...';
+    const card=document.createElement('div');
+    card.className='device-card'+(selectedDevice===device.device_id?' active':'');
+    card.id='card-'+device.device_id;
+    card.innerHTML='<div class="device-id" onclick="selectDevice(&quot;'+device.device_id+'&quot;,'+device.latitude+','+device.longitude+')">📱 '+shortId+'</div>'
+      +'<div class="device-info">📍 '+parseFloat(device.latitude).toFixed(5)+', '+parseFloat(device.longitude).toFixed(5)
+      +'<br>🕐 '+timeSince(device.timestamp)
+      +'<br>🔋 '+device.battery_level+'% &nbsp; 📡 '+parseFloat(device.accuracy).toFixed(0)+'m</div>'
+      +'<button class="btn btn-outline" onclick="selectDevice(&quot;'+device.device_id+'&quot;,'+device.latitude+','+device.longitude+')">📍 Ver ruta / Filtrar fechas</button>';
+    list.appendChild(card);
+    if(markers[device.device_id]){markers[device.device_id].setLatLng([device.latitude,device.longitude]);}
+    else{markers[device.device_id]=L.marker([device.latitude,device.longitude],{icon:deviceIcon}).addTo(map);}
+    markers[device.device_id].bindPopup('<b>📱</b> '+device.device_id.substring(0,16)+'...<br>🔋 '+device.battery_level+'%<br>🕐 '+timeSince(device.timestamp));
+  });
+  if(!selectedDevice&&devices.length>0)map.setView([devices[0].latitude,devices[0].longitude],14);
+}
+
+async function fetchDevices(){
+  try{
+    const res=await fetch(API_URL);
+    const data=await res.json();
+    if(data.success)updateDeviceList(data.data);
+  }catch(err){document.getElementById('status').textContent='⚠️ Error';}
+}
+
+fetchDevices();
+setInterval(fetchDevices,5000);
+</script>
+</body>
+</html>
